@@ -2559,10 +2559,9 @@ async function sendTextReply(client, chatID, text) {
   });
 }
 
-async function sendMarkdownCardReply(client, chatID, markdown, title = 'AI 回复') {
+async function sendMarkdownCardReply(client, chatID, markdown) {
   const safeMarkdown = String(markdown || '').replace(/\r/g, '').trim();
   ensure(safeMarkdown, 'markdown reply is empty');
-  const safeTitle = compactText(String(title || '').trim() || 'AI 回复', 60);
   const card = {
     config: {
       wide_screen_mode: true,
@@ -2575,15 +2574,6 @@ async function sendMarkdownCardReply(client, chatID, markdown, title = 'AI 回�
       },
     ],
   };
-  if (safeTitle) {
-    card.header = {
-      template: 'blue',
-      title: {
-        tag: 'plain_text',
-        content: safeTitle,
-      },
-    };
-  }
   return client.im.v1.message.create({
     params: {
       receive_id_type: 'chat_id',
@@ -2807,7 +2797,6 @@ function shouldRenderFeishuMarkdown(rawText) {
 async function sendRenderedReply(client, chatID, rawText, {
   shouldContinue = null,
   logTag = 'reply',
-  title = 'AI 回复',
   preferMarkdown = true,
 } = {}) {
   const normalized = String(rawText || '').replace(/\r/g, '').trim();
@@ -2822,9 +2811,8 @@ async function sendRenderedReply(client, chatID, rawText, {
     if (typeof shouldContinue === 'function' && !shouldContinue()) break;
     if (!chunk) continue;
     if (renderMarkdown) {
-      const chunkTitle = chunks.length > 1 ? `${title} (${idx + 1}/${chunks.length})` : title;
       try {
-        await sendMarkdownCardReply(client, chatID, chunk, chunkTitle);
+        await sendMarkdownCardReply(client, chatID, chunk);
         sent += 1;
         continue;
       } catch (err) {
@@ -2841,7 +2829,6 @@ async function sendCodexReplyPassthrough(client, chatID, rawText, shouldContinue
   return sendRenderedReply(client, chatID, rawText, {
     shouldContinue,
     logTag: 'reply',
-    title: 'AI 回复',
     preferMarkdown: true,
   });
 }
@@ -4351,7 +4338,6 @@ async function main() {
         } else {
           await sendRenderedReply(client, chatID, echoReply, {
             logTag: 'reply',
-            title: 'AI 回复',
             preferMarkdown: true,
           });
         }
