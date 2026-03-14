@@ -12,6 +12,8 @@
     "feishu:stop": "bash tools/feishu_bot_ctl.sh stop all",
     "feishu:restart": "bash tools/feishu_bot_ctl.sh restart all",
     "feishu:status": "bash tools/feishu_bot_ctl.sh status all",
+    "feishu:monitor": "node tools/feishu_monitor_server.js",
+    "feishu:monitor:status": "node tools/feishu_monitor_server.js --print-status",
     "feishu:install-launchagents": "bash tools/install_feishu_launchagents.sh install all",
     "feishu:launchagents:status": "bash tools/install_feishu_launchagents.sh status all"
   },

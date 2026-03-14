@@ -12,6 +12,7 @@ PATH_VALUE="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex || true)}"
 CODEX_HOME_VALUE="${CODEX_HOME:-${HOME}/.codex}"
+LAUNCHAGENT_LOG_DIR="${CODEX_HOME_VALUE}/launchagent-logs"
 LAUNCHCTL_PREFIX="${SUNCODEXCLAW_LAUNCHCTL_PREFIX:-com.sunbelife.suncodexclaw.feishu}"
 
 usage() {
@@ -75,9 +76,9 @@ write_plist() {
   local label plist_path log_path
   label="$(label_for_account "${account}")"
   plist_path="$(plist_for_account "${account}")"
-  log_path="$(log_for_account "${account}")"
+  log_path="${LAUNCHAGENT_LOG_DIR}/${account}.log"
 
-  mkdir -p "${PLIST_DIR}" "${LOG_DIR}"
+  mkdir -p "${PLIST_DIR}" "${LOG_DIR}" "${LAUNCHAGENT_LOG_DIR}"
 
   cat > "${plist_path}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -94,7 +95,7 @@ write_plist() {
     <string>$(xml_escape "${account}")</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>$(xml_escape "${REPO_DIR}")</string>
+  <string>$(xml_escape "${HOME}")</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

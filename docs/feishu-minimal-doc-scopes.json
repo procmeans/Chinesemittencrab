@@ -1,0 +1,25 @@
+{
+  "scopes": {
+    "tenant": [
+      "im:message",
+      "im:message:readonly",
+      "im:message.group_at_msg:readonly",
+      "im:message.p2p_msg:readonly",
+      "im:message:send_as_bot",
+      "im:chat:read",
+      "im:chat:readonly",
+      "im:chat.members:read",
+      "im:resource",
+      "docx:document",
+      "docx:document:create",
+      "docx:document:readonly",
+      "docx:document:write_only",
+      "drive:drive",
+      "drive:drive.metadata:readonly",
+      "drive:drive:readonly",
+      "docs:permission.member",
+      "docs:permission.member:create"
+    ],
+    "user": []
+  }
+}
