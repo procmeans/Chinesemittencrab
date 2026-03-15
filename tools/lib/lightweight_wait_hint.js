@@ -1,5 +1,6 @@
 const QUESTION_HINT_RE = /[?？]|(什么|怎么|为什么|为何|为啥|是否|有没有|有无|能不能|可以吗|行吗|哪(里|个|些)?|多少|啥|什么意思|怎么回事|who|what|why|how|when|where|which|can you|could you|is there)/iu;
 const TASK_REQUEST_RE = /(帮我|请帮|生成|整理|收集|做成|导出|输出|发送|发到|转发|下载|上传|读取|读一下|分析|总结|扩展|翻译|创建|新建|修改|更新|修复|部署|运行|执行|搜索|搜一下|搜集|写(个|一|一份|一个)?|脚本|代码|pdf|doc|文档|表格|图片|文件|语音|音频|抓取|爬取)/iu;
+const LIGHTWEIGHT_CONVERSATION_RE = /(介绍一下你自己|介绍你自己|你是谁|你能做什么|现在几点|几点了|今天几号|今天星期几|今天周几|现在日期|告诉我时间|自我介绍|认识一下你|说说你自己)/iu;
 
 function isSimpleQuestionInteraction({
   messageType = '',
@@ -13,10 +14,12 @@ function isSimpleQuestionInteraction({
 
   const raw = String(text || '').replace(/\r/g, '').trim();
   if (!raw) return false;
-  if (raw.length > 160) return false;
+  if (raw.length > 220) return false;
   if (raw.split('\n').length > 3) return false;
   if (TASK_REQUEST_RE.test(raw)) return false;
-  return QUESTION_HINT_RE.test(raw);
+  if (QUESTION_HINT_RE.test(raw)) return true;
+  if (LIGHTWEIGHT_CONVERSATION_RE.test(raw)) return true;
+  return true;
 }
 
 function createDelayedWaitNotice({

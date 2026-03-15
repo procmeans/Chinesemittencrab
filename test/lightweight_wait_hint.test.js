@@ -16,6 +16,26 @@ test('isSimpleQuestionInteraction returns true for a short question-like text me
   );
 });
 
+test('isSimpleQuestionInteraction treats time/date style prompts as simple questions', () => {
+  assert.equal(
+    isSimpleQuestionInteraction({
+      messageType: 'text',
+      text: '现在几点',
+    }),
+    true
+  );
+});
+
+test('isSimpleQuestionInteraction treats self-introduction prompts as simple questions', () => {
+  assert.equal(
+    isSimpleQuestionInteraction({
+      messageType: 'text',
+      text: '介绍一下你自己',
+    }),
+    true
+  );
+});
+
 test('isSimpleQuestionInteraction returns false for an obvious task-style request', () => {
   assert.equal(
     isSimpleQuestionInteraction({
