@@ -132,16 +132,26 @@ npm install
 3. `config/secrets/local.yaml`
 4. `config/feishu/<account>.json`
 
-推荐把配置拆成两层：
+推荐把配置拆成三层：
 
 - `config/secrets/local.yaml`
-  - 放敏感项和本机私有配置
-  - 例如：飞书应用密钥、Bot Open ID、Codex token、语音转写 key
+  - 放敏感项、本机私有配置和 `preset`
+  - 例如：飞书应用密钥、Bot Open ID、Codex token、语音转写 key、通用 preset
 - `config/feishu/<account>.json`
   - 放非敏感运行项
-  - 例如：回复模式、工作目录、进度模式、群聊触发规则
+  - 例如：回复模式、工作目录、进度模式、群聊触发规则、显式 `codex.home`
+- 账号 override
+  - 通过 `config.feishu.<account>` 引用一个 `preset`，再叠加账号自己的差异项
 
 如果要启用语音输入，建议配置一个 `speech` 段；不单独配置 `speech.api_key` 时，默认会复用 `codex.api_key` 做转写。
+
+当前版本已经默认按账号解析独立 `CODEX_HOME`：
+
+- `default` -> `~/.codex/feishu/default`
+- `second` -> `~/.codex/feishu/second`
+- `<account>` -> `~/.codex/feishu/<account>`
+
+如果你要显式指定某个机器人的状态目录，写在 `codex.home`。
 
 ![Config Layout](docs/images/config-layout.svg)
 
@@ -181,38 +191,43 @@ cp config/feishu/default.example.json config/feishu/default.json
 ```yaml
 config:
   feishu:
+    presets:
+      dev_assistant:
+        domain: "feishu"
+        reply_mode: "codex"
+        reply_prefix: "AI 助手："
+        require_mention: true
+        require_mention_group_only: true
+        progress:
+          enabled: true
+          mode: "doc"
+          doc:
+            title_prefix: "AI 助手｜任务进度"
+            share_to_chat: true
+            link_scope: "same_tenant"
+            include_user_message: true
+            write_final_reply: true
+        codex:
+          bin: "codex"
+          model: "gpt-5.4"
+          reasoning_effort: "xhigh"
+          history_turns: 6
+          sandbox: "danger-full-access"
+          approval_policy: "never"
+
     assistant:
+      preset: "dev_assistant"
       app_id: "cli_xxx"
       app_secret: "..."
       encrypt_key: "..."
       verification_token: "..."
       bot_open_id: "ou_xxx"
       bot_name: "飞书 Codex 助手"
-      domain: "feishu"
-      reply_mode: "codex"
-      reply_prefix: "AI 助手："
-      require_mention: true
-      require_mention_group_only: true
-      progress:
-        enabled: true
-        mode: "doc"
-        doc:
-          title_prefix: "AI 助手｜任务进度"
-          share_to_chat: true
-          link_scope: "same_tenant"
-          include_user_message: true
-          write_final_reply: true
       codex:
-        bin: "codex"
         api_key: "sk-..."
-        model: "gpt-5.4"
-        reasoning_effort: "xhigh"
         cwd: "/absolute/path/to/workspace"
         add_dirs:
           - "/absolute/path/to/another/workspace"
-        history_turns: 6
-        sandbox: "danger-full-access"
-        approval_policy: "never"
 ```
 
 ### `config/feishu/<account>.json`
@@ -237,7 +252,8 @@ config:
     "cwd": "/absolute/path/to/workspace",
     "add_dirs": [
       "/absolute/path/to/another/workspace"
-    ]
+    ],
+    "home": ""
   }
 }
 ```
@@ -245,9 +261,11 @@ config:
 ### 配置建议
 
 - 密钥尽量只放 `local.yaml`
+- `preset` 优先放 `local.yaml` 的 `config.feishu.presets`
 - `config/feishu/<account>.json` 留给运行参数
 - 部署时优先显式填写 `bot_name`，让群里 `@` 识别和 `bot_open_id` 自动探测更稳定
 - 每个机器人单独配置 `codex.cwd`
+- 如果不显式配置 `codex.home`，系统会默认给每个账号分配独立 `CODEX_HOME`
 - 如果需要跨多个目录工作，可以额外配置 `codex.add_dirs`
 - `bot_open_id` 可以不手填，群里第一次成功 `@` 机器人后会自动探测并持久化
 - 如果你已经通过 `codex login` 登录，也可以不填 `codex.api_key`
@@ -266,7 +284,12 @@ node tools/feishu_ws_bot.js --account assistant --dry-run
 - `app_secret_found=true`
 - `codex_found=true`
 - `progress_mode=doc` 或你自己的配置值
+- `codex_home=...`
 - `codex_cwd=...`
+
+如果你刚从旧版本迁过来，建议再看一眼：
+
+- [Runtime Hardening Migration Notes](docs/plans/2026-03-15-runtime-hardening-migration-notes.md)
 
 ## 飞书开放平台设置
 
@@ -501,6 +524,33 @@ com.sunbelife.suncodexclaw.feishu
 
 ```bash
 export SUNCODEXCLAW_LAUNCHCTL_PREFIX="com.example.suncodexclaw.feishu"
+```
+
+如果你是从老版本升级上来的，重装 LaunchAgents 很重要，因为这一步会把每个账号的独立 `CODEX_HOME` 注入到常驻环境里。
+
+## 回放测试
+
+项目现在有一组基于真实飞书事件结构脱敏后的 replay fixtures：
+
+- `test/fixtures/feishu/group-at.json`
+- `test/fixtures/feishu/quoted-reply.json`
+- `test/fixtures/feishu/group-file.json`
+- `test/fixtures/feishu/audio.json`
+- `test/fixtures/feishu/route-to-chat.json`
+
+它们不是为了模拟整个飞书平台，而是为了把当前最常用、最容易回归的工作流钉住：
+
+- 群聊 `@`
+- 引用回复
+- 群文件 carry
+- 语音消息
+- 跨群结果投递
+- 同发送者排队 / supersede
+
+跑法：
+
+```bash
+node --test test/feishu_event_replay.test.js
 ```
 
 ## 消息能力

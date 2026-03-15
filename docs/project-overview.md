@@ -266,13 +266,13 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 对于非 `default` 账号，优先级从低到高大致是：
 
 1. `config/feishu/default.json`
-2. `config/secrets/local.yaml` 里的 `feishu.default`
+2. `config/secrets/local.yaml` 里的 `feishu.default` 及其引用的 `preset`
 3. `config/feishu/<account>.json`
 4. `config/secrets/local.yaml` 里的 `feishu.<account>`
 5. 环境变量
 6. CLI 参数
 
-`default` 账号更简单，本质上就是 `default.json + local.yaml/default + env + cli`。
+`default` 账号更简单，本质上就是 `default.json + local.yaml/default(+preset) + env + cli`。
 
 也就是说：
 
@@ -304,6 +304,7 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 - 进程隔离
 - 账号级配置隔离
 - 工作目录隔离
+- `CODEX_HOME` 隔离
 - 日志隔离
 - 运行状态快照隔离
 
@@ -315,7 +316,6 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 
 - 同一套仓库代码
 - 同一份 `config/secrets/local.yaml`
-- 同一宿主用户下的 `~/.codex/state_*.sqlite`
 - 同一台机器上的全局 `codex` / `ffmpeg` / Node 环境
 
 所以更准确的说法是：
@@ -323,7 +323,7 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 - 会话和任务层面，已经基本按 bot 隔离
 - 底层宿主资源层面，仍然有共享
 
-如果以后要继续加固隔离，最直接的方向是每个 bot 拆独立 `CODEX_HOME`，并减少默认 alias 的跨账号共享。
+当前默认已经按账号拆独立 `CODEX_HOME`，后续更值得继续做的是减少默认 alias 的跨账号共享，以及继续降低宿主级共享状态。
 
 ## 当前已做增强
 
@@ -396,6 +396,14 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 
 这已经把“机器人活着没有、有没有卡死”从纯日志观察提升成了可视化状态。
 
+### 10. 配置 preset、回放基线和运行时模块拆分
+
+当前版本还新增了三块偏基础设施的能力：
+
+- `config.feishu.presets` 允许把通用运行项复用到多个机器人账号
+- `test/fixtures/feishu/*` + `test/feishu_event_replay.test.js` 把真实飞书工作流钉成 replay 基线
+- `tools/lib/codex/*`、`tools/lib/runtime/thread_state.js`、`tools/lib/platform/feishu/*` 开始承接从主脚本拆出来的 prompt / exec / thread / adapter 逻辑
+
 ## 已规划能力与建议
 
 这一节只记录已经明确讨论过的方向，不代表已经实现。
@@ -404,7 +412,6 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 
 最值得做的是：
 
-- 每个 bot 独立 `CODEX_HOME`
 - 更少依赖默认通用 alias
 - 进一步减少宿主级共享状态
 
@@ -441,7 +448,7 @@ Codex 仍然直接通过 `codex` CLI 执行，核心逻辑也在 `tools/feishu_w
 
 ### 5. 主运行时继续拆模块
 
-虽然现在已经拆出不少 helper，但 `tools/feishu_ws_bot.js` 仍然承担了过多集成职责。
+虽然现在已经拆出 `thread_state`、`prompt_builder`、`exec_service`、`incoming_event`、`reply_gateway` 等模块，但 `tools/feishu_ws_bot.js` 仍然承担了过多集成职责。
 
 如果后面继续做大功能，最有价值的长期建议是继续把以下逻辑往外拆：
 
