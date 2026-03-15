@@ -6,6 +6,7 @@ node_modules/
 
 # local runtime and logs
 .runtime/
+.worktrees/
 *.log
 
 # local runtime config
