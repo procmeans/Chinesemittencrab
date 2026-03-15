@@ -11,8 +11,6 @@ PLIST_DIR="${HOME}/Library/LaunchAgents"
 PATH_VALUE="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex || true)}"
-CODEX_HOME_VALUE="${CODEX_HOME:-${HOME}/.codex}"
-LAUNCHAGENT_LOG_DIR="${CODEX_HOME_VALUE}/launchagent-logs"
 LAUNCHCTL_PREFIX="${SUNCODEXCLAW_LAUNCHCTL_PREFIX:-com.sunbelife.suncodexclaw.feishu}"
 
 usage() {
@@ -71,14 +69,35 @@ xml_escape() {
   printf '%s' "${value}"
 }
 
+resolve_codex_home() {
+  local account="${1:-default}"
+  local output value
+
+  output="$("${NODE_BIN}" "${BOT_SCRIPT}" --account "${account}" --dry-run 2>/dev/null || true)"
+  value="$(sed -n 's/^codex_home=//p' <<<"${output}" | head -n 1)"
+  if [[ -n "${value}" ]]; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+
+  if [[ -n "${CODEX_HOME:-}" ]]; then
+    printf '%s\n' "${CODEX_HOME}"
+    return 0
+  fi
+
+  printf '%s\n' "${HOME}/.codex/feishu/${account}"
+}
+
 write_plist() {
   local account="$1"
-  local label plist_path log_path
+  local label plist_path log_path codex_home_value launchagent_log_dir
   label="$(label_for_account "${account}")"
   plist_path="$(plist_for_account "${account}")"
-  log_path="${LAUNCHAGENT_LOG_DIR}/${account}.log"
+  codex_home_value="$(resolve_codex_home "${account}")"
+  launchagent_log_dir="${codex_home_value}/launchagent-logs"
+  log_path="${launchagent_log_dir}/${account}.log"
 
-  mkdir -p "${PLIST_DIR}" "${LOG_DIR}" "${LAUNCHAGENT_LOG_DIR}"
+  mkdir -p "${PLIST_DIR}" "${LOG_DIR}" "${launchagent_log_dir}"
 
   cat > "${plist_path}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -103,7 +122,7 @@ write_plist() {
     <key>HOME</key>
     <string>$(xml_escape "${HOME}")</string>
     <key>CODEX_HOME</key>
-    <string>$(xml_escape "${CODEX_HOME_VALUE}")</string>
+    <string>$(xml_escape "${codex_home_value}")</string>
     <key>FEISHU_CODEX_BIN</key>
     <string>$(xml_escape "${CODEX_BIN}")</string>
   </dict>

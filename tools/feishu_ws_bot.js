@@ -11,6 +11,7 @@ const {
   upsertConfigEntry,
 } = require('./lib/local_secret_store');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
+const { resolveCodexHome } = require('./lib/codex/codex_home');
 const {
   FEISHU_SEND_CHAT_DIRECTIVE_PREFIX,
   FEISHU_SEND_FILE_DIRECTIVE_PREFIX,
@@ -396,7 +397,7 @@ function resolveFakeStreamConfig(config) {
   };
 }
 
-function resolveCodexConfig(config) {
+function resolveCodexConfig(config, accountName = 'default') {
   const codexConfig = config.codex || {};
   const apiKey = pickValue([
     ['cli', getArg('--codex-api-key', '')],
@@ -425,6 +426,11 @@ function resolveCodexConfig(config) {
   const addDirs = resolveOptionalDirList(
     getArg('--codex-add-dirs', process.env.FEISHU_CODEX_ADD_DIRS || codexConfig.add_dirs || codexConfig.addDirs || '')
   ).filter((dir) => dir !== cwd);
+  const home = resolveCodexHome({
+    accountName,
+    config,
+    env: process.env,
+  });
 
   return {
     bin: String(getArg('--codex-bin', process.env.FEISHU_CODEX_BIN || codexConfig.bin || 'codex')).trim() || 'codex',
@@ -446,6 +452,7 @@ function resolveCodexConfig(config) {
     apiKeySource: apiKey.source,
     sandbox,
     approvalPolicy,
+    home,
   };
 }
 
@@ -2293,6 +2300,7 @@ function runCodexExec({
   sandbox,
   approvalPolicy,
   apiKey = '',
+  codexHome = '',
   prompt,
   imagePaths = [],
   resumeSessionId = '',
@@ -2335,6 +2343,11 @@ function runCodexExec({
     if (resolvedApiKey) {
       childEnv.OPENAI_API_KEY = resolvedApiKey;
       childEnv.CODEX_API_KEY = resolvedApiKey;
+    }
+    const resolvedCodexHome = String(codexHome || '').trim();
+    if (resolvedCodexHome) {
+      fs.mkdirSync(resolvedCodexHome, { recursive: true });
+      childEnv.CODEX_HOME = resolvedCodexHome;
     }
 
     const child = spawn(bin, args, {
@@ -2454,6 +2467,7 @@ async function generateCodexReply({
       cwd: codex.cwd,
       addDirs: codex.addDirs,
       apiKey: codex.apiKey,
+      codexHome: codex.home,
       sandbox: codex.sandbox,
       approvalPolicy: codex.approvalPolicy,
       prompt,
@@ -3711,7 +3725,11 @@ async function main() {
   const fakeStream = resolveFakeStreamConfig(config);
 
   const creds = resolveCredentials(config);
-  const codex = resolveCodexConfig(config);
+  const codex = resolveCodexConfig(config, accountName);
+  if (codex.home) {
+    process.env.CODEX_HOME = codex.home;
+    cachedCodexStateDbPath = '';
+  }
   const speech = resolveSpeechConfig(config, codex);
   const codexDetect = detectCodex(codex.bin);
   const mentionAliases = resolveMentionAliases({
@@ -3770,6 +3788,7 @@ async function main() {
     console.log(`codex_model=${codex.model || '(default)'}`);
     console.log(`codex_reasoning_effort=${codex.reasoningEffort || '(default)'}`);
     console.log(`codex_profile=${codex.profile || '(default)'}`);
+    console.log(`codex_home=${codex.home}`);
     console.log(`codex_cwd=${codex.cwd || process.cwd()}`);
     console.log(`codex_add_dirs=${codex.addDirs.length > 0 ? codex.addDirs.join(' | ') : '(none)'}`);
     console.log(`codex_sandbox=${codex.sandbox}`);
@@ -4573,6 +4592,7 @@ async function main() {
     console.log(`codex_model=${codex.model || '(default)'}`);
     console.log(`codex_reasoning_effort=${codex.reasoningEffort || '(default)'}`);
     console.log(`codex_profile=${codex.profile || '(default)'}`);
+    console.log(`codex_home=${codex.home}`);
     console.log(`codex_cwd=${codex.cwd || process.cwd()}`);
     console.log(`codex_add_dirs=${codex.addDirs.length > 0 ? codex.addDirs.join(' | ') : '(none)'}`);
   console.log(`codex_sandbox=${codex.sandbox}`);
