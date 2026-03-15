@@ -4,11 +4,13 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const {
+  asPlainObject,
   deepMerge,
-  readConfigEntry,
+  readConfigRoot,
   resolveSecretsFile,
   upsertConfigEntry,
 } = require('./lib/local_secret_store');
+const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const {
   FEISHU_SEND_CHAT_DIRECTIVE_PREFIX,
   FEISHU_SEND_FILE_DIRECTIVE_PREFIX,
@@ -161,9 +163,10 @@ function pickValue(candidates) {
 
 function loadFeishuConfig(accountName, configDir) {
   const defaultPath = path.resolve(configDir, 'default.json');
+  const yamlRoot = asPlainObject(readConfigRoot('feishu', {}));
   const defaultConfig = deepMerge(
     readJsonIfExists(defaultPath) || {},
-    readConfigEntry('feishu', 'default', {})
+    resolvePresetConfig(yamlRoot, 'default')
   );
   const chosen = accountName || 'default';
 
@@ -177,8 +180,9 @@ function loadFeishuConfig(accountName, configDir) {
 
   const accountPath = path.resolve(configDir, `${chosen}.json`);
   const accountConfig = readJsonIfExists(accountPath);
-  const yamlConfig = readConfigEntry('feishu', chosen, {});
-  ensure(accountConfig || Object.keys(yamlConfig).length > 0, `feishu config not found: ${accountPath}`);
+  const yamlConfig = resolvePresetConfig(yamlRoot, chosen);
+  const yamlEntryExists = Object.keys(asPlainObject(yamlRoot[chosen])).length > 0;
+  ensure(accountConfig || yamlEntryExists, `feishu config not found: ${accountPath}`);
   return {
     accountName: chosen,
     config: deepMerge(defaultConfig, accountConfig || {}, yamlConfig),

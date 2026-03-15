@@ -1,6 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
+const {
+  RESERVED_CONFIG_ENTRY_NAMES,
+  listResolvableConfigEntryNames,
+} = require('./config/preset_resolver');
 
 const DEFAULT_SECRETS_FILE = path.resolve(__dirname, '..', '..', 'config', 'secrets', 'local.yaml');
 
@@ -93,6 +97,7 @@ function readConfigEntry(section, name = 'default', fallback = undefined) {
   const root = asPlainObject(readConfigRoot(section, {}));
   const key = String(name || '').trim();
   if (!key) return fallback;
+  if (RESERVED_CONFIG_ENTRY_NAMES.has(key)) return fallback;
   const entry = asPlainObject(root[key]);
   if (Object.keys(entry).length > 0) return entry;
   return fallback;
@@ -100,7 +105,7 @@ function readConfigEntry(section, name = 'default', fallback = undefined) {
 
 function listConfigEntryNames(section) {
   const root = asPlainObject(readConfigRoot(section, {}));
-  return Object.keys(root).sort();
+  return listResolvableConfigEntryNames(root);
 }
 
 function normalizeSecretsDoc(doc) {
