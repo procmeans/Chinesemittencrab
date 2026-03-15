@@ -1,3 +1,5 @@
+const { isMentionCarryEligibleMessage } = require('./mention_carry');
+
 function isAttachmentCarryEligibleMessageType(messageType) {
   const normalized = String(messageType || '').trim().toLowerCase();
   return normalized === 'file' || normalized === 'image' || normalized === 'post' || normalized === 'audio';
@@ -27,6 +29,7 @@ function buildDispatchEnvelope(eventData, {
   mentionAliases = [],
   botOpenId = '',
   recentMentionedSenders = null,
+  recentReplyFollowUps = null,
   now = Date.now(),
   buildConversationScope = () => ({ key: '' }),
   isGroupChat = () => true,
@@ -38,6 +41,8 @@ function buildDispatchEnvelope(eventData, {
   rememberRecentMention = () => {},
   pruneMentionCarryState = () => {},
   getRecentMentionState = () => null,
+  pruneReplyFollowUpWindowState = () => {},
+  getReplyFollowUpWindowState = () => null,
 } = {}) {
   const data = eventData || {};
   const message = data?.message || {};
@@ -46,6 +51,9 @@ function buildDispatchEnvelope(eventData, {
   const messageID = String(message.message_id || '').trim();
   const senderOpenID = String(data?.sender?.sender_id?.open_id || '').trim();
   const messageType = String(message.message_type || '').trim().toLowerCase();
+  const parsedText = messageType === 'text' ? parseMessageText(message.content || '') : '';
+  const parsedPost = messageType === 'post' ? parsePostContent(message.content || '') : { text: '' };
+  const normalizedMessageText = messageType === 'post' ? parsedPost.text : parsedText;
   const conversationScope = buildConversationScope(chatID, chatType, senderOpenID, messageID);
   const explicitBotMention = hasExplicitBotMentionInMessage(message, {
     mentionAliases,
@@ -59,16 +67,24 @@ function buildDispatchEnvelope(eventData, {
   const groupChat = isGroupChat(chatType);
 
   let allowMentionCarry = false;
-  if (groupChat && senderOpenID && recentMentionedSenders) {
+  if (groupChat && senderOpenID) {
     if (explicitBotMention) {
-      const parsedText = messageType === 'text' ? parseMessageText(message.content || '') : '';
-      const parsedPost = messageType === 'post' ? parsePostContent(message.content || '') : { text: '' };
-      const normalizedMessageText = messageType === 'post' ? parsedPost.text : parsedText;
       const textMentionAlias = detectTextualBotMention(normalizedMessageText, mentionAliases);
-      rememberRecentMention(recentMentionedSenders, chatID, senderOpenID, textMentionAlias, now);
-    } else if (isAttachmentCarryEligibleMessageType(messageType)) {
-      pruneMentionCarryState(recentMentionedSenders, now);
-      allowMentionCarry = Boolean(getRecentMentionState(recentMentionedSenders, chatID, senderOpenID, now));
+      if (recentMentionedSenders) {
+        rememberRecentMention(recentMentionedSenders, chatID, senderOpenID, textMentionAlias, now);
+      }
+    } else {
+      if (recentMentionedSenders && isAttachmentCarryEligibleMessageType(messageType)) {
+        pruneMentionCarryState(recentMentionedSenders, now);
+        allowMentionCarry = Boolean(getRecentMentionState(recentMentionedSenders, chatID, senderOpenID, now));
+      }
+      if (!allowMentionCarry && recentReplyFollowUps) {
+        pruneReplyFollowUpWindowState(recentReplyFollowUps, now);
+        allowMentionCarry = Boolean(
+          getReplyFollowUpWindowState(recentReplyFollowUps, chatID, senderOpenID, now)
+          && isMentionCarryEligibleMessage(messageType, normalizedMessageText)
+        );
+      }
     }
   }
 

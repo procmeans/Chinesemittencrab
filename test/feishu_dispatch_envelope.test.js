@@ -3,11 +3,12 @@ const assert = require('node:assert/strict');
 
 const { buildDispatchEnvelope } = require('../tools/lib/feishu_dispatch_envelope');
 
-function makeDeps(now, recentMentionedSenders) {
+function makeDeps(now, recentMentionedSenders, recentReplyFollowUps = new Map()) {
   return {
     mentionAliases: ['小草的机器人'],
     botOpenId: 'ou_bot',
     recentMentionedSenders,
+    recentReplyFollowUps,
     now,
     buildConversationScope(chatID, chatType, senderOpenID) {
       return {
@@ -47,6 +48,15 @@ function makeDeps(now, recentMentionedSenders) {
     },
     pruneMentionCarryState() {},
     getRecentMentionState(stateMap, chatID, senderOpenID) {
+      return stateMap.get(`${chatID}:${senderOpenID}`) || null;
+    },
+    rememberReplyFollowUpWindow(stateMap, chatID, senderOpenID, timestamp) {
+      stateMap.set(`${chatID}:${senderOpenID}`, {
+        timestamp,
+      });
+    },
+    pruneReplyFollowUpWindowState() {},
+    getReplyFollowUpWindowState(stateMap, chatID, senderOpenID) {
       return stateMap.get(`${chatID}:${senderOpenID}`) || null;
     },
   };
@@ -103,6 +113,36 @@ test('buildDispatchEnvelope preserves carry eligibility for queued attachment fo
       },
     },
   }, makeDeps(1_500, recentMentionedSenders));
+
+  assert.equal(envelope.shouldSupersedeActiveTask, false);
+  assert.deepEqual(envelope.payload.dispatchMeta, {
+    explicitBotMention: false,
+    allowMentionCarry: true,
+    receivedAt: 1_500,
+  });
+});
+
+test('buildDispatchEnvelope allows plain text carry inside a recent reply follow-up window', () => {
+  const recentMentionedSenders = new Map();
+  const recentReplyFollowUps = new Map([
+    ['chat-1:ou_user', { timestamp: 1_200 }],
+  ]);
+
+  const envelope = buildDispatchEnvelope({
+    message: {
+      chat_id: 'chat-1',
+      chat_type: 'group',
+      message_id: 'om_3',
+      message_type: 'text',
+      content: '继续说说这个思路',
+      mentions: [],
+    },
+    sender: {
+      sender_id: {
+        open_id: 'ou_user',
+      },
+    },
+  }, makeDeps(1_500, recentMentionedSenders, recentReplyFollowUps));
 
   assert.equal(envelope.shouldSupersedeActiveTask, false);
   assert.deepEqual(envelope.payload.dispatchMeta, {

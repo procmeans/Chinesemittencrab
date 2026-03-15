@@ -45,10 +45,13 @@ const {
 } = require('./lib/lightweight_wait_hint');
 const {
   getRecentMentionState,
+  getReplyFollowUpWindowState,
   isMentionCarryEligibleMessage,
   isMentionlessGroupFileAllowed,
+  pruneReplyFollowUpWindowState,
   pruneMentionCarryState,
   rememberRecentMention,
+  rememberReplyFollowUpWindow,
 } = require('./lib/mention_carry');
 const { createRuntimeStatusStore } = require('./lib/runtime_status_store');
 const { createFeishuRuntimeTracker } = require('./lib/feishu_runtime_status');
@@ -3870,6 +3873,7 @@ async function main() {
   const chatStates = new Map();
   const chatRunners = new Map();
   const recentMentionedSenders = new Map();
+  const recentReplyFollowUps = new Map();
 
   process.on('exit', () => {
     runtimeTracker.stopHeartbeat();
@@ -3917,12 +3921,17 @@ async function main() {
     const normalizedImageKeys = uniqueStrings(imageKeys);
     const groupChat = isGroupChat(chatType);
     pruneMentionCarryState(recentMentionedSenders, now);
+    pruneReplyFollowUpWindowState(recentReplyFollowUps, now);
     const recentMentionState = groupChat && !botMentioned && !mentionMatchedByMentionName && !mentionMatchedByText
       ? getRecentMentionState(recentMentionedSenders, chatID, senderOpenID, now)
+      : null;
+    const replyFollowUpState = groupChat && !botMentioned && !mentionMatchedByMentionName && !mentionMatchedByText
+      ? getReplyFollowUpWindowState(recentReplyFollowUps, chatID, senderOpenID, now)
       : null;
     const mentionMatchedByCarry = Boolean(
       dispatchMeta.allowMentionCarry
       || (recentMentionState && isMentionCarryEligibleMessage(messageType, normalizedMessageText))
+      || (replyFollowUpState && isMentionCarryEligibleMessage(messageType, normalizedMessageText))
     );
     const mentionGateBypassedForGroupFile = groupChat && isMentionlessGroupFileAllowed(messageType);
 
@@ -3946,6 +3955,8 @@ async function main() {
     if (mentionMatchedByCarry) {
       if (recentMentionState?.timestamp) {
         console.log(`mention_fallback=recent_sender_window age_ms=${now - recentMentionState.timestamp}`);
+      } else if (replyFollowUpState?.timestamp) {
+        console.log(`mention_fallback=reply_follow_up_window age_ms=${now - replyFollowUpState.timestamp}`);
       } else {
         console.log('mention_fallback=queued_sender_window');
       }
@@ -4021,9 +4032,11 @@ async function main() {
       });
     }
 
+    let didSendFinalUserReply = false;
     async function sendRuntimeReplySuccess(replyText, logTag) {
       const sent = await sendTextReplySafe(client, chatID, replyText, logTag);
       if (sent) {
+        didSendFinalUserReply = true;
         runtimeTracker.recordReplySuccess({
           task: runtimeTask,
           summary: compactText(replyText, 400),
@@ -4476,6 +4489,7 @@ async function main() {
             await progressReporter.recordFinalReply(finalReplyForLog || userReplyText || codexRawReply);
           }
           replyText = finalReplyForLog || userReplyText;
+          didSendFinalUserReply = true;
           runtimeTracker.recordReplySuccess({
             task: runtimeTask,
             summary: compactText(replyText || codexRawReply, 400),
@@ -4505,10 +4519,14 @@ async function main() {
             },
           });
         }
+        didSendFinalUserReply = true;
         runtimeTracker.recordReplySuccess({
           task: runtimeTask,
           summary: compactText(echoReply, 400),
         });
+      }
+      if (didSendFinalUserReply && groupChat && senderOpenID) {
+        rememberReplyFollowUpWindow(recentReplyFollowUps, chatID, senderOpenID, Date.now());
       }
       if (delayedWaitNotice) {
         await delayedWaitNotice.dismiss();
@@ -4584,6 +4602,7 @@ async function main() {
         mentionAliases,
         botOpenId: creds.botOpenId.value,
         recentMentionedSenders,
+        recentReplyFollowUps,
         buildConversationScope,
         isGroupChat,
         parseMessageText,
@@ -4594,6 +4613,8 @@ async function main() {
         rememberRecentMention,
         pruneMentionCarryState,
         getRecentMentionState,
+        pruneReplyFollowUpWindowState,
+        getReplyFollowUpWindowState,
       });
       const {
         dispatchEnvelope,

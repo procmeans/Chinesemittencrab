@@ -3,10 +3,13 @@ const assert = require('node:assert/strict');
 
 const {
   FEISHU_GROUP_MENTION_CARRY_WINDOW_MS,
+  FEISHU_GROUP_REPLY_FOLLOW_UP_WINDOW_MS,
   getRecentMentionState,
+  getReplyFollowUpWindowState,
   isMentionCarryEligibleMessage,
   isMentionlessGroupFileAllowed,
   rememberRecentMention,
+  rememberReplyFollowUpWindow,
 } = require('../tools/lib/mention_carry');
 
 test('plain follow-up text is eligible for mention carry', () => {
@@ -36,6 +39,21 @@ test('recent mention state expires after the carry window', () => {
   });
   assert.equal(
     getRecentMentionState(state, 'chat-1', 'user-1', now + FEISHU_GROUP_MENTION_CARRY_WINDOW_MS + 1),
+    null
+  );
+});
+
+test('reply follow-up window state expires after the reply window', () => {
+  const state = new Map();
+  const now = 2_000;
+
+  rememberReplyFollowUpWindow(state, 'chat-1', 'user-1', now);
+
+  assert.deepEqual(getReplyFollowUpWindowState(state, 'chat-1', 'user-1', now + 1), {
+    timestamp: now,
+  });
+  assert.equal(
+    getReplyFollowUpWindowState(state, 'chat-1', 'user-1', now + FEISHU_GROUP_REPLY_FOLLOW_UP_WINDOW_MS + 1),
     null
   );
 });
