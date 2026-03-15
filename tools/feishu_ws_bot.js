@@ -12,16 +12,21 @@ const {
 } = require('./lib/local_secret_store');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const { resolveCodexHome } = require('./lib/codex/codex_home');
+const execService = require('./lib/codex/exec_service');
+const threadState = require('./lib/runtime/thread_state');
 const {
   FEISHU_SEND_CHAT_DIRECTIVE_PREFIX,
   FEISHU_SEND_FILE_DIRECTIVE_PREFIX,
   FEISHU_SEND_IMAGE_DIRECTIVE_PREFIX,
   extractFeishuReplyDirectives,
 } = require('./lib/feishu_reply_directives');
-const { resolveTargetChatByName } = require('./lib/feishu_chat_target');
-const { deliverFeishuTextReply } = require('./lib/feishu_chat_routing');
-const { buildDispatchEnvelope } = require('./lib/feishu_dispatch_envelope');
 const { appendDocChildrenInBatches } = require('./lib/docx_append_batches');
+const { normalizeIncomingFeishuEvent } = require('./lib/platform/feishu/incoming_event');
+const {
+  deliverReplyAttachments,
+  deliverReplyText,
+  resolveReplyTarget,
+} = require('./lib/platform/feishu/reply_gateway');
 const {
   buildMarkdownCardPayload,
   deliverRenderedReply,
@@ -4189,11 +4194,11 @@ async function main() {
     }
     updateRuntimeTaskSummary(runtimeTask, historyUserText || userText || incomingText);
 
-    const chatState = ensureChatState(chatStates, conversationScope.stateKey || chatID);
+    const chatState = threadState.ensureChatState(chatStates, conversationScope.stateKey || chatID);
     if (messageType === 'text') {
-      const threadCommand = parseThreadCommand(userText);
+      const threadCommand = threadState.parseThreadCommand(userText);
       if (threadCommand) {
-        const result = handleThreadCommand(chatState, threadCommand);
+        const result = threadState.handleThreadCommand(chatState, threadCommand);
         if (result.handled) {
           await sendRuntimeReplySuccess(result.reply, 'thread_reply');
           console.log(`thread_state total=${chatState.order.length} current=${chatState.currentThreadId}`);
@@ -4202,8 +4207,8 @@ async function main() {
         }
       }
 
-      if (isResetCommand(userText)) {
-        const currentThread = getCurrentThread(chatState);
+      if (threadState.isResetCommand(userText)) {
+        const currentThread = threadState.getCurrentThread(chatState);
         if (!currentThread) {
           await sendRuntimeReplySuccess('当前线程不存在，请先用 /thread new 创建。', 'reset_reply');
           console.log('reply=ok mode=reset_missing_thread');
@@ -4258,24 +4263,26 @@ async function main() {
 
       let replyText = '';
       if (replyMode === 'codex') {
-        const currentThread = getCurrentThread(chatState);
+        const currentThread = threadState.getCurrentThread(chatState);
         if (!currentThread) {
           throw new Error('current thread not found');
         }
         runtimeTracker.markCodexExecution({ task: runtimeTask });
         const history = currentThread.history || [];
-        const codexThreadTitle = buildCodexThreadTitle({
+        const codexThreadTitle = threadState.buildCodexThreadTitle({
           botName: botName || accountName,
           localThreadName: currentThread.name || currentThread.id,
           userText: historyUserText || userText,
         });
-        const codexReply = await generateCodexReply({
+        const codexReply = await execService.generateCodexReply({
           codex,
           history,
           userText,
           imagePaths,
           sessionId: currentThread.codexThreadId,
           threadTitle: codexThreadTitle,
+          readThreadExecutionPolicy: readCodexThreadExecutionPolicy,
+          logger: console,
           onSpawn: (child) => {
             taskControl.attachCodexChild(child);
           },
@@ -4354,10 +4361,13 @@ async function main() {
         } else {
           let targetChatResolution = null;
           if (replyDirectives.targetChatName) {
-            targetChatResolution = await resolveTargetChatByName(client, replyDirectives.targetChatName);
+            targetChatResolution = await resolveReplyTarget({
+              client,
+              targetChatName: replyDirectives.targetChatName,
+            });
           }
           taskControl.throwIfCancelled();
-          const delivery = await deliverFeishuTextReply({
+          const delivery = await deliverReplyText({
             client,
             sourceChatId: chatID,
             replyText: userReplyText,
@@ -4369,13 +4379,14 @@ async function main() {
           taskControl.throwIfCancelled();
           const attachmentSendResult = replyDirectives.targetChatName
             ? { sent: [], failed: [] }
-            : await sendRequestedAttachments(
+            : await deliverReplyAttachments({
               client,
               chatID,
-              replyDirectives.attachments,
-              codex.cwd || process.cwd(),
-              () => !taskControl.isCancelled()
-            );
+              attachments: replyDirectives.attachments,
+              cwd: codex.cwd || process.cwd(),
+              shouldContinue: () => !taskControl.isCancelled(),
+              sendRequestedAttachmentsFn: sendRequestedAttachments,
+            });
           taskControl.throwIfCancelled();
           if (!replyDirectives.targetChatName && !userReplyText && attachmentSendResult.sent.length > 0) {
             userReplyText = buildDefaultAttachmentReply(attachmentSendResult.sent);
@@ -4434,7 +4445,7 @@ async function main() {
         });
       }
       if (replyMode === 'codex' && codex.historyTurns > 0) {
-        const currentThread = getCurrentThread(chatState);
+        const currentThread = threadState.getCurrentThread(chatState);
         if (!currentThread) {
           throw new Error('current thread not found after reply');
         }
@@ -4451,11 +4462,11 @@ async function main() {
         currentThread.updatedAt = Date.now();
       }
 
-      const activeThread = getCurrentThread(chatState);
+      const activeThread = threadState.getCurrentThread(chatState);
       console.log(`reply=ok mode=${replyMode} thread=${activeThread ? activeThread.id : ''}`);
     } catch (err) {
       if (taskControl.isCancelled() || isTaskCancelledError(err)) {
-        const currentThread = getCurrentThread(chatState);
+        const currentThread = threadState.getCurrentThread(chatState);
         if (currentThread) {
           currentThread.codexThreadId = '';
           currentThread.updatedAt = Date.now();
@@ -4492,7 +4503,7 @@ async function main() {
     loggerLevel: lark.LoggerLevel.info,
   }).register({
     'im.message.receive_v1': (data) => {
-      const dispatchEnvelope = buildDispatchEnvelope(data, {
+      const normalizedIncoming = normalizeIncomingFeishuEvent(data, {
         mentionAliases,
         botOpenId: creds.botOpenId.value,
         recentMentionedSenders,
@@ -4507,17 +4518,18 @@ async function main() {
         pruneMentionCarryState,
         getRecentMentionState,
       });
-      const message = dispatchEnvelope.payload?.eventData?.message || {};
-      const chatID = message.chat_id || 'unknown';
-      const chatType = message.chat_type || '';
-      const messageID = message.message_id || '';
-      const messageType = String(message.message_type || '').trim().toLowerCase();
-      const senderOpenID = dispatchEnvelope.payload?.eventData?.sender?.sender_id?.open_id || '';
-      const mentions = Array.isArray(message.mentions) ? message.mentions : [];
-      const rawText = messageType === 'post'
-        ? parsePostContent(message.content || '').text
-        : parseMessageText(message.content || '');
-      const taskKey = dispatchEnvelope.taskKey || chatID || messageID || 'unknown';
+      const {
+        dispatchEnvelope,
+        message,
+        chatID,
+        chatType,
+        messageID,
+        messageType,
+        senderOpenID,
+        mentions,
+        rawText,
+        taskKey,
+      } = normalizedIncoming;
       const runner = chatRunners.get(taskKey);
       if (runner?.activeTask && !shouldSupersedeActiveTask({
         messageType,

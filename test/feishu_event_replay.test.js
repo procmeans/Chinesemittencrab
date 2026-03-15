@@ -7,6 +7,18 @@ const { buildDispatchEnvelope } = require('../tools/lib/feishu_dispatch_envelope
 const { resolveTargetChatByName } = require('../tools/lib/feishu_chat_target');
 const { dispatchQueuedByChat } = require('../tools/lib/task_queue');
 const {
+  normalizeIncomingFeishuEvent,
+} = require('../tools/lib/platform/feishu/incoming_event');
+const {
+  resolveReplyTarget,
+} = require('../tools/lib/platform/feishu/reply_gateway');
+const {
+  generateCodexReply,
+} = require('../tools/lib/codex/exec_service');
+const {
+  buildCodexPrompt,
+} = require('../tools/lib/codex/prompt_builder');
+const {
   composeQuotedPrompt,
   resolveReferencedMessageContext,
 } = require('../tools/lib/referenced_message_context');
@@ -17,6 +29,12 @@ const {
   parsePostContent,
   projectFeishuMessageEvent,
 } = require('../tools/lib/platform/feishu/event_projection');
+const {
+  ensureChatState,
+  getCurrentThread,
+  handleThreadCommand,
+  isResetCommand,
+} = require('../tools/lib/runtime/thread_state');
 
 function readFixture(name) {
   const filePath = path.join(__dirname, 'fixtures', 'feishu', `${name}.json`);
@@ -212,6 +230,54 @@ test('route-to-chat fixture preserves the target group request and resolves a ma
   });
 });
 
+test('incoming event adapter normalizes the raw Feishu payload into stable dispatch metadata', () => {
+  const fixture = readFixture('group-at');
+  const normalized = normalizeIncomingFeishuEvent(
+    fixture.event,
+    buildReplayDeps({
+      mentionAliases: ['小草的机器人'],
+      botOpenId: 'ou_bot_alias',
+      recentMentionedSenders: new Map(),
+      now: 2_000,
+    })
+  );
+
+  assert.equal(normalized.taskKey, 'oc_group_yy::ou_user_yy');
+  assert.equal(normalized.messageType, 'text');
+  assert.equal(normalized.rawText, '@小草的机器人 继续整理这个需求');
+  assert.equal(normalized.dispatchEnvelope.shouldSupersedeActiveTask, true);
+});
+
+test('reply gateway resolves the routed target chat without mutating the original source chat decision', async () => {
+  const fixture = readFixture('route-to-chat');
+  const client = {
+    im: {
+      v1: {
+        chat: {
+          async search() {
+            return {
+              data: {
+                items: fixture.chat_search_results,
+              },
+            };
+          },
+        },
+      },
+    },
+  };
+
+  const resolution = await resolveReplyTarget({
+    client,
+    targetChatName: fixture.target_chat_query,
+  });
+
+  assert.deepEqual(resolution, {
+    status: 'resolved',
+    chatId: 'oc_target_yy',
+    chatName: 'YY专用机器人群',
+  });
+});
+
 test('same-sender replay events queue plain follow-ups and supersede on a fresh explicit mention', async () => {
   const first = readFixture('group-at');
   const followUp = readFixture('quoted-reply');
@@ -309,4 +375,114 @@ test('same-sender replay events queue plain follow-ups and supersede on a fresh 
   assert.deepEqual(started, ['om_group_at_1', 'om_group_at_2']);
   assert.deepEqual(finished, ['om_group_at_2']);
   assert.equal(chatRunners.size, 0);
+});
+
+test('prompt builder preserves quoted context and thread history in fresh prompts', async () => {
+  const fixture = readFixture('quoted-reply');
+  const projection = projectFeishuMessageEvent(fixture);
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async get() {
+            return {
+              data: {
+                item: fixture.referenced_message,
+              },
+            };
+          },
+        },
+      },
+    },
+  };
+  const referencedContext = await resolveReferencedMessageContext({
+    client,
+    message: fixture.event.message,
+  });
+  const userText = composeQuotedPrompt({
+    quotedText: referencedContext.text,
+    currentText: projection.incomingText,
+  });
+
+  const prompt = buildCodexPrompt({
+    systemPrompt: '你是飞书里的开发助手。',
+    history: [
+      { role: 'user', text: '先帮我收集资料。' },
+      { role: 'assistant', text: '我已经整理了一版初稿。' },
+    ],
+    userText,
+    cwd: '/Users/procmeans/Documents/robot/yyyy',
+    addDirs: ['/Users/procmeans/Documents/SunCodexClaw'],
+    threadTitle: 'YY的烹饪游戏开发助手 | 主线程 | 飞机大厨',
+  });
+
+  assert.match(prompt, /YY的烹饪游戏开发助手 \| 主线程 \| 飞机大厨/);
+  assert.match(prompt, /\[用户\] 先帮我收集资料。/);
+  assert.match(prompt, /\[助手\] 我已经整理了一版初稿。/);
+  assert.match(prompt, /引用消息：/);
+  assert.match(prompt, /当前消息：/);
+  assert.match(prompt, /额外可访问工作目录：/);
+});
+
+test('generateCodexReply falls back to a fresh prompt when the stored thread policy mismatches', async () => {
+  const invocations = [];
+
+  const result = await generateCodexReply({
+    codex: {
+      systemPrompt: '你是飞书里的开发助手。',
+      cwd: '/Users/procmeans/Documents/robot/yyyy',
+      addDirs: [],
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never',
+    },
+    history: [{ role: 'user', text: '旧上下文' }],
+    userText: '继续完善这份结论',
+    imagePaths: [],
+    sessionId: 'thread-existing',
+    threadTitle: 'YY线程',
+    readThreadExecutionPolicy() {
+      return {
+        sandboxType: 'workspace-write',
+        approvalMode: 'never',
+      };
+    },
+    runExec: async ({ prompt, resumeSessionId }) => {
+      invocations.push({ prompt, resumeSessionId });
+      return {
+        reply: 'fresh reply',
+        threadId: 'thread-new',
+      };
+    },
+  });
+
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].resumeSessionId, '');
+  assert.match(invocations[0].prompt, /对话上下文（按时间顺序，可能为空）：/);
+  assert.equal(result.reply, 'fresh reply');
+  assert.equal(result.threadId, 'thread-new');
+});
+
+test('thread state helpers preserve thread creation, switching, and reset semantics', () => {
+  const chatStates = new Map();
+  const state = ensureChatState(chatStates, 'oc_group_yy::ou_user_yy');
+
+  const created = handleThreadCommand(state, {
+    type: 'new',
+    name: '深度调研',
+  });
+  assert.equal(created.handled, true);
+  assert.match(created.reply, /已创建并切换到新线程：t2 · 深度调研/);
+  assert.equal(getCurrentThread(state).id, 't2');
+
+  const switched = handleThreadCommand(state, {
+    type: 'switch',
+    target: '主线程',
+  });
+  assert.equal(switched.handled, true);
+  assert.match(switched.reply, /已切换到线程：t1 · 主线程/);
+  assert.equal(getCurrentThread(state).id, 't1');
+
+  assert.equal(isResetCommand('/reset'), true);
+  assert.equal(isResetCommand('清空上下文'), true);
+  assert.equal(isResetCommand('继续处理'), false);
 });
