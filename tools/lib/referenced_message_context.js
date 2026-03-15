@@ -10,6 +10,50 @@ function parseTextContent(rawContent) {
   return '';
 }
 
+function normalizeDocumentLikeText(raw = '') {
+  const text = String(raw || '').replace(/\r/g, '').trim();
+  if (!text) return '';
+  const urlMatch = text.match(/https?:\/\/\S+/i);
+  if (!urlMatch) return text;
+  const url = String(urlMatch[0] || '').trim();
+  const beforeUrl = text.slice(0, urlMatch.index).trim();
+  const title = beforeUrl.replace(/[《》"'“”]/g, '').trim();
+  if (!title) return url;
+  return `${title}\n${url}`;
+}
+
+function parseInteractiveContent(rawContent) {
+  const content = String(rawContent || '').trim();
+  if (!content) return '';
+  try {
+    const parsed = JSON.parse(content);
+    const elements = Array.isArray(parsed?.elements) ? parsed.elements : [];
+    const textParts = [];
+
+    for (const element of elements) {
+      const tag = String(element?.tag || '').trim().toLowerCase();
+      if ((tag === 'markdown' || tag === 'lark_md') && typeof element?.content === 'string') {
+        const markdown = String(element.content || '').trim();
+        if (markdown) textParts.push(markdown);
+        continue;
+      }
+      if ((tag === 'plain_text' || tag === 'text') && typeof element?.content === 'string') {
+        const plainText = String(element.content || '').trim();
+        if (plainText) textParts.push(plainText);
+        continue;
+      }
+      if (typeof element?.text?.content === 'string') {
+        const nestedText = String(element.text.content || '').trim();
+        if (nestedText) textParts.push(nestedText);
+      }
+    }
+
+    return textParts.join('\n\n').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
 function parsePostContent(rawContent) {
   const content = String(rawContent || '').trim();
   if (!content) return '';
@@ -50,8 +94,9 @@ function parseReferencedMessageText(message = {}) {
   const messageType = String(message?.msg_type || message?.message_type || '').trim().toLowerCase();
   const rawContent = message?.body?.content || message?.content || '';
 
-  if (messageType === 'text') return parseTextContent(rawContent);
+  if (messageType === 'text') return normalizeDocumentLikeText(parseTextContent(rawContent));
   if (messageType === 'post') return parsePostContent(rawContent);
+  if (messageType === 'interactive') return parseInteractiveContent(rawContent);
   if (messageType === 'image') return '[引用了一条图片消息]';
   if (messageType === 'file') return '[引用了一个文件消息]';
   if (messageType === 'audio') return '[引用了一条语音消息]';

@@ -424,6 +424,55 @@ test('prompt builder preserves quoted context and thread history in fresh prompt
   assert.match(prompt, /额外可访问工作目录：/);
 });
 
+test('quoted interactive reply fixture keeps card markdown in the composed prompt', async () => {
+  const projection = {
+    incomingText: '继续基于上面的结论细化',
+  };
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async get() {
+            return {
+              data: {
+                item: {
+                  message_id: 'om_card_reply',
+                  msg_type: 'interactive',
+                  body: {
+                    content: JSON.stringify({
+                      elements: [
+                        {
+                          tag: 'markdown',
+                          content: '## 关键结论\n\n- 飞机大厨近期活动频繁\n- 竞品更新集中在节日版本',
+                        },
+                      ],
+                    }),
+                  },
+                },
+              },
+            };
+          },
+        },
+      },
+    },
+  };
+
+  const referencedContext = await resolveReferencedMessageContext({
+    client,
+    message: {
+      parent_id: 'om_card_reply',
+    },
+  });
+  const userText = composeQuotedPrompt({
+    quotedText: referencedContext.text,
+    currentText: projection.incomingText,
+  });
+
+  assert.match(userText, /## 关键结论/);
+  assert.match(userText, /飞机大厨近期活动频繁/);
+  assert.match(userText, /当前消息：\n继续基于上面的结论细化/);
+});
+
 test('generateCodexReply falls back to a fresh prompt when the stored thread policy mismatches', async () => {
   const invocations = [];
 

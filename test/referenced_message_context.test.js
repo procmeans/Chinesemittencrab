@@ -96,6 +96,81 @@ test('resolveReferencedMessageContext parses referenced post messages into plain
   assert.equal(result.text, '更新汇总\n第一段\n第二段');
 });
 
+test('resolveReferencedMessageContext parses referenced interactive card messages into plain text', async () => {
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async get() {
+            return {
+              data: {
+                items: [{
+                  message_id: 'om_card',
+                  msg_type: 'interactive',
+                  body: {
+                    content: JSON.stringify({
+                      config: {
+                        wide_screen_mode: true,
+                      },
+                      elements: [
+                        { tag: 'markdown', content: '## 当前结论\n\n- 第一条\n- 第二条' },
+                      ],
+                    }),
+                  },
+                }],
+              },
+            };
+          },
+        },
+      },
+    },
+  };
+
+  const result = await resolveReferencedMessageContext({
+    client,
+    message: {
+      parent_id: 'om_card',
+    },
+  });
+
+  assert.equal(result.text, '## 当前结论\n\n- 第一条\n- 第二条');
+});
+
+test('resolveReferencedMessageContext summarizes referenced document-like messages with title and url', async () => {
+  const client = {
+    im: {
+      v1: {
+        message: {
+          async get() {
+            return {
+              data: {
+                items: [{
+                  message_id: 'om_doc',
+                  msg_type: 'text',
+                  body: {
+                    content: JSON.stringify({
+                      text: '《飞机大厨资料汇总》 https://example.feishu.cn/docx/abc123',
+                    }),
+                  },
+                }],
+              },
+            };
+          },
+        },
+      },
+    },
+  };
+
+  const result = await resolveReferencedMessageContext({
+    client,
+    message: {
+      parent_id: 'om_doc',
+    },
+  });
+
+  assert.equal(result.text, '飞机大厨资料汇总\nhttps://example.feishu.cn/docx/abc123');
+});
+
 test('composeQuotedPrompt prepends quoted text before the current message', () => {
   assert.equal(
     composeQuotedPrompt({
