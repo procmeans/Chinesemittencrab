@@ -1,0 +1,25 @@
+{
+  "event": {
+    "message": {
+      "chat_id": "oc_group_yy",
+      "chat_type": "group",
+      "message_id": "om_group_quote_1",
+      "message_type": "text",
+      "content": "{\"text\":\"继续细化扩展这个方案\"}",
+      "parent_id": "om_parent_requirement"
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_user_yy"
+      },
+      "sender_type": "user"
+    }
+  },
+  "referenced_message": {
+    "message_id": "om_parent_requirement",
+    "msg_type": "text",
+    "body": {
+      "content": "{\"text\":\"请帮我整理飞机大厨和类似游戏的最新消息，做成一个结论版本。\"}"
+    }
+  }
+}

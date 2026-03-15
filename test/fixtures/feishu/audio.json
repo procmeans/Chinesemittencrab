@@ -1,0 +1,18 @@
+{
+  "event": {
+    "message": {
+      "chat_id": "oc_group_audio",
+      "chat_type": "group",
+      "message_id": "om_group_audio_1",
+      "message_type": "audio",
+      "content": "{\"file_key\":\"audio_v3_00cc_voice001\",\"duration\":18000}",
+      "mentions": []
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_audio_user"
+      },
+      "sender_type": "user"
+    }
+  }
+}

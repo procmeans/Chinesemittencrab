@@ -1,0 +1,25 @@
+{
+  "event": {
+    "message": {
+      "chat_id": "oc_group_yy",
+      "chat_type": "group",
+      "message_id": "om_group_at_1",
+      "message_type": "text",
+      "content": "{\"text\":\"@小草的机器人 继续整理这个需求\"}",
+      "mentions": [
+        {
+          "id": {
+            "open_id": "ou_bot_alias"
+          },
+          "name": "小草的机器人"
+        }
+      ]
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_user_yy"
+      },
+      "sender_type": "user"
+    }
+  }
+}

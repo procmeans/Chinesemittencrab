@@ -1,0 +1,33 @@
+{
+  "event": {
+    "message": {
+      "chat_id": "oc_group_source",
+      "chat_type": "group",
+      "message_id": "om_route_1",
+      "message_type": "text",
+      "content": "{\"text\":\"@小草的机器人 把这份总结整理成最终结论，发到 YY专用机器人群\"}",
+      "mentions": [
+        {
+          "id": {
+            "open_id": "ou_bot_alias"
+          },
+          "name": "小草的机器人"
+        }
+      ]
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_route_user"
+      },
+      "sender_type": "user"
+    }
+  },
+  "target_chat_query": "YY专用机器人群",
+  "chat_search_results": [
+    {
+      "chat_id": "oc_target_yy",
+      "name": "YY专用机器人群",
+      "chat_status": "normal"
+    }
+  ]
+}

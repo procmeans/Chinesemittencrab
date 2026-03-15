@@ -1,0 +1,18 @@
+{
+  "event": {
+    "message": {
+      "chat_id": "oc_group_yy",
+      "chat_type": "group",
+      "message_id": "om_group_file_1",
+      "message_type": "file",
+      "content": "{\"file_key\":\"file_v3_00cc_abc123\",\"file_name\":\"飞机大厨需求文档.pdf\",\"file_size\":1048576}",
+      "mentions": []
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_user_yy"
+      },
+      "sender_type": "user"
+    }
+  }
+}
