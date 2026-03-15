@@ -40,6 +40,10 @@ const {
   resolveReferencedMessageContext,
 } = require('./lib/referenced_message_context');
 const {
+  createDelayedWaitNotice,
+  isSimpleQuestionInteraction,
+} = require('./lib/lightweight_wait_hint');
+const {
   getRecentMentionState,
   isMentionCarryEligibleMessage,
   isMentionlessGroupFileAllowed,
@@ -339,6 +343,36 @@ function resolveTypingConfig(config) {
     getArg('--typing-emoji', process.env.FEISHU_TYPING_EMOJI || typing.emoji || 'Typing')
   ).trim() || 'Typing';
   return { enabled, emoji };
+}
+
+function resolveLightweightWaitConfig(config) {
+  const wait = config.lightweight_wait || {};
+  const enabled = asBool(
+    getArg('--lightweight-wait-enabled', process.env.FEISHU_LIGHTWEIGHT_WAIT_ENABLED || wait.enabled),
+    true
+  );
+  const delayMs = asInt(
+    getArg('--lightweight-wait-delay-ms', process.env.FEISHU_LIGHTWEIGHT_WAIT_DELAY_MS || wait.delay_ms),
+    8000,
+    0,
+    60000
+  );
+  const updateIntervalMs = asInt(
+    getArg(
+      '--lightweight-wait-update-interval-ms',
+      process.env.FEISHU_LIGHTWEIGHT_WAIT_UPDATE_INTERVAL_MS || wait.update_interval_ms
+    ),
+    15000,
+    1000,
+    120000
+  );
+  const message = String(
+    getArg(
+      '--lightweight-wait-message',
+      process.env.FEISHU_LIGHTWEIGHT_WAIT_MESSAGE || wait.message || '还在思考中，请稍等…'
+    )
+  ).trim() || '还在思考中，请稍等…';
+  return { enabled, delayMs, updateIntervalMs, message };
 }
 
 function resolveMentionConfig(config) {
@@ -3726,6 +3760,7 @@ async function main() {
   const replyMode = resolveReplyMode(config);
   const progress = resolveProgressConfig(config);
   const typing = resolveTypingConfig(config);
+  const lightweightWait = resolveLightweightWaitConfig(config);
   const mentionConfig = resolveMentionConfig(config);
   const fakeStream = resolveFakeStreamConfig(config);
 
@@ -3771,6 +3806,10 @@ async function main() {
     console.log(`reply_prefix=${String(replyPrefix)}`);
     console.log(`typing_indicator=${typing.enabled ? 'true' : 'false'}`);
     console.log(`typing_emoji=${typing.emoji}`);
+    console.log(`lightweight_wait_enabled=${lightweightWait.enabled ? 'true' : 'false'}`);
+    console.log(`lightweight_wait_delay_ms=${lightweightWait.delayMs}`);
+    console.log(`lightweight_wait_update_interval_ms=${lightweightWait.updateIntervalMs}`);
+    console.log(`lightweight_wait_message=${lightweightWait.message}`);
     console.log(`fake_stream=${fakeStream.enabled ? 'true' : 'false'}`);
     console.log(`fake_stream_interval_ms=${fakeStream.intervalMs}`);
     console.log(`fake_stream_chunk_chars=${fakeStream.chunkChars}`);
@@ -4226,7 +4265,16 @@ async function main() {
       }
     }
 
-    const progressReporter = replyMode === 'codex' && progress.enabled
+    const useLightweightWaitFlow = replyMode === 'codex'
+      && lightweightWait.enabled
+      && isSimpleQuestionInteraction({
+        messageType,
+        text: incomingText,
+        imageCount: normalizedImageKeys.length,
+        fileCount: messageType === 'file' ? 1 : 0,
+        hasAudio: messageType === 'audio',
+      });
+    const progressReporter = replyMode === 'codex' && progress.enabled && !useLightweightWaitFlow
       ? createProgressReporter({
         client,
         chatID,
@@ -4237,9 +4285,24 @@ async function main() {
         runtimeTask,
       })
       : null;
+    const delayedWaitNotice = useLightweightWaitFlow
+      ? createDelayedWaitNotice({
+        delayMs: lightweightWait.delayMs,
+        updateIntervalMs: lightweightWait.updateIntervalMs,
+        message: lightweightWait.message,
+        sendNotice: (textValue) => sendTextReplyWithMessageIdSafe(client, chatID, textValue, 'lightweight_wait_notice'),
+        updateNotice: (messageId, textValue) => updateTextMessage(client, messageId, textValue),
+        recallNotice: (messageId) => recallMessageSafe(client, messageId, 'lightweight_wait_recall'),
+      })
+      : null;
     taskControl.onCancel(async () => {
       if (progressReporter && typeof progressReporter.abort === 'function') {
         await progressReporter.abort();
+      }
+    });
+    taskControl.onCancel(async () => {
+      if (delayedWaitNotice && typeof delayedWaitNotice.dismiss === 'function') {
+        await delayedWaitNotice.dismiss();
       }
     });
     const typingState = typing.enabled && messageID
@@ -4253,9 +4316,12 @@ async function main() {
 
     try {
       taskControl.throwIfCancelled();
+      if (delayedWaitNotice) {
+        await delayedWaitNotice.start();
+      }
       if (progressReporter) {
         await progressReporter.start();
-      } else if (progress.enabled) {
+      } else if (progress.enabled && !useLightweightWaitFlow) {
         await sendTextReplySafe(client, chatID, progress.message, 'progress_notice');
         console.log('progress_notice=sent');
       }
@@ -4444,6 +4510,9 @@ async function main() {
           summary: compactText(echoReply, 400),
         });
       }
+      if (delayedWaitNotice) {
+        await delayedWaitNotice.dismiss();
+      }
       if (replyMode === 'codex' && codex.historyTurns > 0) {
         const currentThread = threadState.getCurrentThread(chatState);
         if (!currentThread) {
@@ -4475,13 +4544,21 @@ async function main() {
           task: runtimeTask,
           reason: taskControl.cancelReason || err.reason || err.message,
         });
+        if (delayedWaitNotice) {
+          await delayedWaitNotice.dismiss();
+        }
         console.log(`reply=cancelled mode=${replyMode} reason=${taskControl.cancelReason || err.reason || err.message}`);
         return;
       }
       console.error(`reply=error mode=${replyMode} message=${err.message}`);
       runtimeTracker.recordReplyFailure(err, { task: runtimeTask });
+      if (delayedWaitNotice) {
+        await delayedWaitNotice.dismiss();
+      }
       if (progressReporter) {
         await progressReporter.fail(`处理失败：${err.message}`);
+      } else if (replyMode === 'codex') {
+        await sendTextReplySafe(client, chatID, '处理失败，请稍后重试。', 'reply_error_notice');
       }
     } finally {
       if (typingState) {
@@ -4588,6 +4665,10 @@ async function main() {
   console.log(`mention_aliases=${mentionAliases.length > 0 ? mentionAliases.join(' | ') : '(none)'}`);
   console.log(`reply_mode=${replyMode}`);
   console.log(`typing_indicator=${typing.enabled ? 'true' : 'false'}`);
+  console.log(`lightweight_wait_enabled=${lightweightWait.enabled ? 'true' : 'false'}`);
+  console.log(`lightweight_wait_delay_ms=${lightweightWait.delayMs}`);
+  console.log(`lightweight_wait_update_interval_ms=${lightweightWait.updateIntervalMs}`);
+  console.log(`lightweight_wait_message=${lightweightWait.message}`);
   console.log(`fake_stream=${fakeStream.enabled ? 'true' : 'false'}`);
   console.log(`progress_notice=${progress.enabled ? 'true' : 'false'}`);
   console.log(`progress_mode=${progress.mode}`);

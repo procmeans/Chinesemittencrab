@@ -1,5 +1,8 @@
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+const CODEX_AUTH_BOOTSTRAP_FILES = ['auth.json', 'config.toml'];
 
 function asPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -17,6 +20,32 @@ function resolveHomePath(value, homeDir = os.homedir()) {
 function buildDefaultCodexHome({ accountName = 'default', homeDir = os.homedir() } = {}) {
   const account = String(accountName || 'default').trim() || 'default';
   return path.resolve(homeDir, '.codex', 'feishu', account);
+}
+
+function bootstrapCodexHomeAuth({
+  codexHome = '',
+  sharedCodexHome = path.resolve(os.homedir(), '.codex'),
+  homeDir = os.homedir(),
+} = {}) {
+  const targetHome = resolveHomePath(codexHome, homeDir);
+  const sourceHome = resolveHomePath(sharedCodexHome, homeDir);
+
+  if (!targetHome || !sourceHome) return [];
+  if (targetHome === sourceHome) return [];
+  if (!fs.existsSync(sourceHome)) return [];
+
+  fs.mkdirSync(targetHome, { recursive: true });
+
+  const copied = [];
+  for (const fileName of CODEX_AUTH_BOOTSTRAP_FILES) {
+    const sourceFile = path.join(sourceHome, fileName);
+    const targetFile = path.join(targetHome, fileName);
+    if (!fs.existsSync(sourceFile) || fs.existsSync(targetFile)) continue;
+    fs.copyFileSync(sourceFile, targetFile);
+    copied.push(fileName);
+  }
+
+  return copied;
 }
 
 function resolveCodexHome({ accountName = 'default', config = {}, env = process.env, homeDir = os.homedir() } = {}) {
@@ -37,6 +66,7 @@ function resolveCodexHome({ accountName = 'default', config = {}, env = process.
 }
 
 module.exports = {
+  bootstrapCodexHomeAuth,
   buildDefaultCodexHome,
   resolveCodexHome,
   resolveHomePath,

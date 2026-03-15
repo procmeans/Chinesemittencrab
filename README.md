@@ -39,12 +39,24 @@
 
 - 飞书 WebSocket 长连接收消息
 - 按账号把消息路由到对应的 `codex cwd`
+- 按账号解析独立 `CODEX_HOME`
 - 用 `codex exec --json` 执行任务
 - 把过程写回飞书消息或飞书云文档
+- 简单问答默认走轻量等待提示，不会一上来就建进度文档
 - 支持按需把最终回复渲染成飞书 Markdown 卡片
+- 支持引用消息上下文、群聊排队、按群名转发最终纯文本结果
 - 支持图片分析、图片回传、语音输入转写、文件读取、文件回传、线程记忆、Skills、本机操作
+- 支持 LaunchAgents 常驻和本机只读监控面板
 
 这套项目特别适合那种“在飞书里提任务，机器人直接去代码库和电脑上干活，再把过程回给你”的工作方式。
+
+## 最近已经做成的能力
+
+- 多机器人隔离更硬：除了独立进程和独立工作目录，现在默认还会给每个账号分配独立 `CODEX_HOME`，把线程状态和运行时目录拆开；首次运行时还会自动继承共享 `~/.codex` 里的登录凭据，不需要每个账号单独重新登录。
+- 群聊工作流更自然：支持同群同发送者排队、显式 `@` supersede、先 `@` 再补文件或图片、引用消息正文进上下文。
+- 问答体验更轻：短问题默认先显示飞书 `typing`，如果 8 秒还没回，再补一条等待提示；之后每 15 秒会在同一条消息里更新时间，最终回复发出后自动撤回。
+- 飞书回传更完整：最终结果可以自动切 Markdown 卡片，纯文本结果可以按群名发到目标群，文档进度会按批次写入，降低大块内容回写失败和限流的概率。
+- 运维体验更成熟：支持多机器人统一 LaunchAgent 常驻、本机只读监控面板，以及对“活着没有、在干什么、是否疑似卡死”的状态观察。
 
 ## 和 OpenClaw 的区别
 
@@ -62,14 +74,18 @@
   - 所以可以读写文件、执行命令、在工作目录里改代码、产出文件并回发给飞书
 - 支持多 agent 同时运行：
   - 可以给不同 agent 配独立目录
+  - 默认还会给每个账号分配独立 `CODEX_HOME`
   - 互不干扰，并行处理各自的任务和工作区
 - 对飞书适配更深：
   - 支持群聊 `@` 触发
   - 支持“先 @ 再单独发文件/图片”的连续工作流
+  - 支持引用消息正文进入上下文
+  - 简单问答默认只显示 typing / 延迟等待提示，等待消息会持续显示已等待时长，复杂任务才走进度提示或进度文档
   - 支持按内容自动切换普通文本 / Markdown 卡片回复
   - 群里运行中的任务默认不会被别人打断；只有同一发送者再次明确 `@` 机器人，才会中断并改跑新需求
+  - 支持按群名把最终纯文本结果发到目标群
   - 支持飞书云文档进度、文档排版、文档链接回发
-  - 支持多账号、多机器人统一启停和 LaunchAgents
+  - 支持多账号、多机器人统一启停、LaunchAgents 和本机监控面板
 - 自带记忆：
   - 每个会话有线程上下文
   - 支持 `/thread new`、`/thread switch`、`/reset`
@@ -153,6 +169,8 @@ npm install
 
 如果你要显式指定某个机器人的状态目录，写在 `codex.home`。
 
+第一次在新的独立 `CODEX_HOME` 下执行时，运行时会自动尝试从共享 `~/.codex` 复制 `auth.json` 和 `config.toml`，这样已经登录过的 Codex 环境可以平滑继承到每个账号自己的目录里；如果账号目录里已经有自己的认证文件，则不会覆盖。
+
 ![Config Layout](docs/images/config-layout.svg)
 
 目录结构：
@@ -207,6 +225,11 @@ config:
             link_scope: "same_tenant"
             include_user_message: true
             write_final_reply: true
+        lightweight_wait:
+          enabled: true
+          delay_ms: 8000
+          update_interval_ms: 15000
+          message: "还在思考中，请稍等…"
         codex:
           bin: "codex"
           model: "gpt-5.4"
@@ -248,6 +271,12 @@ config:
       "title_prefix": "AI 助手｜任务进度"
     }
   },
+  "lightweight_wait": {
+    "enabled": true,
+    "delay_ms": 8000,
+    "update_interval_ms": 15000,
+    "message": "还在思考中，请稍等…"
+  },
   "codex": {
     "cwd": "/absolute/path/to/workspace",
     "add_dirs": [
@@ -267,6 +296,7 @@ config:
 - 每个机器人单独配置 `codex.cwd`
 - 如果不显式配置 `codex.home`，系统会默认给每个账号分配独立 `CODEX_HOME`
 - 如果需要跨多个目录工作，可以额外配置 `codex.add_dirs`
+- 如果你想调简单问答的等待体验，可以配置 `lightweight_wait.delay_ms` 和 `lightweight_wait.update_interval_ms`
 - `bot_open_id` 可以不手填，群里第一次成功 `@` 机器人后会自动探测并持久化
 - 如果你已经通过 `codex login` 登录，也可以不填 `codex.api_key`
 
@@ -560,6 +590,10 @@ node --test test/feishu_event_replay.test.js
 - 支持普通文本回复
 - 支持多轮上下文
 - 支持 `/threads`、`/thread new`、`/thread switch`、`/thread current`、`/reset`
+- 短问题默认走轻量等待流：先显示 `typing`，如果 8 秒还没出结果，再发 `还在思考中，请稍等…`
+- 之后每 15 秒会原地更新同一条等待消息，显示总等待时长，例如 `还在思考中，已等待 23 秒…`
+- 这条等待提示会在最终回复后自动撤回，所以不会长期留在群里
+- 明显任务型请求仍然走原来的进度提示或进度文档流程
 
 ### 图片
 

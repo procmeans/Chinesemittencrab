@@ -3,6 +3,9 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const {
+  bootstrapCodexHomeAuth,
+} = require('./codex_home');
+const {
   buildCodexPrompt,
   buildCodexResumePrompt,
 } = require('./prompt_builder');
@@ -76,6 +79,7 @@ function runCodexExec({
     const resolvedCodexHome = String(codexHome || '').trim();
     if (resolvedCodexHome) {
       fs.mkdirSync(resolvedCodexHome, { recursive: true });
+      bootstrapCodexHomeAuth({ codexHome: resolvedCodexHome });
       childEnv.CODEX_HOME = resolvedCodexHome;
     }
 
